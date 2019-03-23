@@ -75,6 +75,22 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
         return hasAvailableCapacity(requiredCapacity, false);
     }
 
+    /**
+     * 当前序列的nextValue + requiredCapacity是事件发布者要申请的序列值。
+     * 当前序列的cachedValue记录的是之前事件处理者申请的序列值。
+     *
+     * 想一下一个环形队列，事件发布者在什么情况下才能申请一个序列呢？
+     * 事件发布者当前的位置在事件处理者前面，并且不能从事件处理者后面追上事件处理者(因为是环形)，
+     * 即"事件发布者要申请的序列值大于事件处理者之前的序列值"或者"事件发布者要申请的序列值减去环的长度要小于事件处理者的序列值"
+     * 如果满足这个条件，即使不知道当前事件处理者的序列值，也能确保事件发布者可以申请给定的序列。
+     * 如果不满足这个条件，就需要查看一下当前事件处理者的最小的序列值(因为可能有多个事件处理者)，
+     * 如果当前要申请的序列值比当前事件处理者的最小序列值大了一圈(从后面追上了)，那就不能申请了(申请的话会覆盖没被消费的事件)，
+     * 也就是说没有可用的空间(用来发布事件)了，也就是hasAvailableCapacity方法要表达的意思。
+     *
+     * @param requiredCapacity
+     * @param doStore
+     * @return
+     */
     private boolean hasAvailableCapacity(int requiredCapacity, boolean doStore)
     {
         long nextValue = this.nextValue;
@@ -111,6 +127,9 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
     }
 
     /**
+     * next方法是真正申请序列的方法，里面的逻辑和hasAvailableCapacity一样，
+     * 只是在不能申请序列的时候会阻塞等待一下，然后重试。
+     *
      * @see Sequencer#next(int)
      */
     @Override
@@ -134,6 +153,7 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
             long minSequence;
             while (wrapPoint > (minSequence = Util.getMinimumSequence(gatingSequences, nextValue)))
             {
+                // 挂起当前线程，阻塞等待。
                 LockSupport.parkNanos(1L); // TODO: Use waitStrategy to spin?
             }
 
@@ -155,6 +175,8 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
     }
 
     /**
+     * tryNext方法是next方法的非阻塞版本，不能申请就抛异常。
+     *
      * @see Sequencer#tryNext(int)
      */
     @Override
@@ -176,6 +198,8 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
     }
 
     /**
+     * remainingCapacity方法就是环形队列的容量减去事件发布者与事件处理者的序列差。
+     *
      * @see Sequencer#remainingCapacity()
      */
     @Override
@@ -189,6 +213,8 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
     }
 
     /**
+     * claim方法是声明一个序列，在初始化的时候用。
+     *
      * @see Sequencer#claim(long)
      */
     @Override
